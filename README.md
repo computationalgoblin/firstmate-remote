@@ -1,11 +1,12 @@
 # Firstmate Remote
 
-Backend local asíncrono para enviar trabajos a la **sesión viva de First Mate**, cerrar el cliente y consultar o responder después. La Fase 2 del MVP incluye SQLite, una cola serial, CLI, worker independiente y notificaciones ntfy opcionales. Todavía no incluye HTTP, Shortcut de iOS ni reproducción de audio.
+Backend local asíncrono para enviar trabajos a la **sesión viva de First Mate**, cerrar el cliente y consultar o responder después. La Fase 3 del MVP añade un gateway HTTP autenticado y un flujo de iOS Shortcuts a SQLite, cola serial, CLI, worker independiente y notificaciones ntfy. El iPhone dicta, recibe «Enviado» tras persistir el trabajo y termina; el resultado llega después por ntfy. No hay aplicación iOS nativa.
 
 La integración utiliza el contrato real de la extensión de voz de First Mate:
 
 ```text
-CLI → SQLite → worker → state/voice/turns/<id>.request.json
+Shortcut → gateway HTTP ─┐
+CLI ────────────────────┴→ SQLite → worker → state/voice/turns/<id>.request.json
                               ↓ extensión del primario vivo
                         .claimed.json → .answer.json | .error.json
                               ↓
@@ -73,6 +74,15 @@ journalctl --user -u fmvoice.service -n 100
 
 Parar el worker no cancela el turno del primario. Al arrancar, vuelve a observar los IDs persistidos y sus ficheros. No hay timeout de duración total del job. Los envíos realizados con el worker parado quedan en cola.
 
+## iPhone y gateway HTTP
+
+`fmvoice gateway` ejecuta el servicio de envío en `127.0.0.1:8765`, con Bearer obligatorio desde `FMVOICE_API_TOKEN`. Reutiliza SQLite y no depende del turno ni del transporte Herdr para confirmar. Mantén el worker en ejecución para procesar la cola y publicar por ntfy.
+
+- [Despliegue, contrato HTTP, seguridad y operación](docs/http-api.md): servicio `config/fmvoice-gateway.service`, token privado, HTTPS con Tailscale Serve y límites.
+- [Construcción exacta de los atajos en iPhone](docs/ios-shortcut.md): dictado, UUID durable, confirmación, reintento, respuesta a preguntas, Action Button, Siri y pruebas manuales.
+
+No se publica un `.shortcut` sin verificar. La validación en iPhone/AirPods y la configuración de Tailscale/ntfy del dispositivo quedan como pasos de instalación; la suite prueba el transporte con dobles locales.
+
 ## CLI
 
 Todos los comandos devuelven JSON; un error de comando sale por stderr con código 1.
@@ -110,11 +120,11 @@ timeout = 5
 
 Guarda las variables con tus valores reales en `~/.config/fmvoice/notifications.env` con permisos `600`; la unidad systemd lo carga. En primer plano, expórtalas en el entorno. Para un servidor sin autenticación, configura `token_env = ""`. Nunca versiones ese fichero ni el tema.
 
-Se publica por HTTPS con el [formato JSON oficial de ntfy](https://docs.ntfy.sh/publish/#publish-as-json). Solo se envían pregunta o `spoken_response` para `needs_input`, `completed`, `failed` y `cancelled`. No se envían prompts, respuesta detallada, errores técnicos ni logs. No se siguen redirecciones con credenciales. Los fallos del proveedor se reintentan cada 5 s sin modificar el job; tras un crash puede repetirse una notificación (entrega al menos una vez). Activar ntfy más tarde entrega también los eventos pendientes existentes. Esta fase no configura APNs, el cliente iOS ni TTS.
+Se publica por HTTPS con el [formato JSON oficial de ntfy](https://docs.ntfy.sh/publish/#publish-as-json). Solo se envían pregunta o `spoken_response` para `needs_input`, `completed`, `failed` y `cancelled`. No se envían prompts, respuesta detallada, errores técnicos ni logs. No se siguen redirecciones con credenciales. Los fallos del proveedor se reintentan cada 5 s sin modificar el job; tras un crash puede repetirse una notificación (entrega al menos una vez). Activar ntfy más tarde entrega también los eventos pendientes existentes. La configuración del cliente iOS se describe en el flujo de Shortcuts; no se añaden APNs ni reproducción automática del resultado.
 
 ## Seguridad y depuración
 
-- Servicio exclusivamente local: no abre puertos TCP ni expone Herdr a Internet.
+- Gateway TCP exclusivamente en loopback, token obligatorio y HTTPS privado mediante Tailscale Serve. No expone Herdr a Internet. La CLI administrativa sigue siendo local y tiene una superficie más amplia que la API pública.
 - Los prompts se escriben como JSON atómico, nunca como comandos de shell. El límite es 16 KiB **incluido el envoltorio**, compatible con el contrato v1.
 - SQLite, sus eventos y los turnos contienen información privada. Usa almacenamiento local privado; el worker/CLI aplica `umask 077` y los ficheros nuevos se crean con permisos restrictivos. No compartas la base ni los backups.
 - `show` permite consultar por separado `spoken_response`, `full_response`, `question` y `error`. Solo `spoken_response` o la pregunta deben usarse como voz; no leas en voz alta el JSON completo.
@@ -131,7 +141,7 @@ Consulta [recuperación y límites del contrato](docs/integration.md#recuperaci�
 python3 -m unittest discover -v
 ```
 
-La suite determinista usa directorios temporales, sockets Unix falsos y una extensión de voz simulada. Prueba estados, transiciones, concurrencia de la cola, idempotencia, preguntas/respuestas, errores, cancelación, transporte, outbox y recuperación. La prueba entre procesos lanza CLI, worker y doble de extensión con configuración temporal: termina el cliente, reinicia el worker con un turno reclamado y consulta el resultado después. No usa red externa, modelo ni sesión real.
+La suite determinista usa directorios temporales, sockets Unix falsos y una extensión de voz simulada. Prueba estados, transiciones, concurrencia de la cola, idempotencia, preguntas/respuestas, errores, cancelación, transporte, outbox y recuperación. La prueba entre procesos lanza CLI, worker y doble de extensión con configuración temporal: termina el cliente, reinicia el worker con un turno reclamado y consulta el resultado después. Otra prueba entre procesos termina el cliente HTTP mientras el worker mantiene el job reclamado, y obtiene el resultado tras liberar el doble. También se prueban autenticación, límites, rate limiting, validación estricta y redacción de campos privados. No usa red externa, modelo ni sesión real.
 
 La prueba viva está fuera del descubrimiento normal, omite la ejecución salvo opt-in y solo verifica salud/esquema del plano de control:
 

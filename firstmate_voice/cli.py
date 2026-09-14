@@ -36,6 +36,7 @@ def parser():
     cancel = sub.add_parser('cancel')
     cancel.add_argument('job_id')
     sub.add_parser('worker')
+    sub.add_parser('gateway', help='Run the authenticated HTTP submission service')
     sub.add_parser('health')
     return p
 
@@ -50,6 +51,10 @@ def main(argv=None):
     repo = None
     try:
         config = Config.load(args.config)
+        if args.command == 'gateway':
+            from .gateway import serve as serve_gateway
+            serve_gateway(config)
+            return 0
         if args.command == 'worker':
             asyncio.run(serve(config))
             return 0

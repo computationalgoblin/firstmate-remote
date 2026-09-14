@@ -16,3 +16,13 @@ server = ""
 topic_env = "FMVOICE_NTFY_TOPIC"
 token_env = "FMVOICE_NTFY_TOKEN"
 timeout = 5
+
+[gateway]
+# HTTP stays on IPv4 loopback. Use Tailscale Serve for private HTTPS access.
+host = "127.0.0.1"
+port = 8765
+# Secret value lives only in the process environment/private gateway.env.
+token_env = "FMVOICE_API_TOKEN"
+request_timeout = 3
+rate_limit = 60
+rate_window = 60

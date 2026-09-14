@@ -17,6 +17,7 @@ class Config:
     claim_timeout: float = 15
     poll_interval: float = 0.25
     notifications: dict = field(default_factory=dict)
+    gateway: dict = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> "Config":
@@ -34,7 +35,7 @@ class Config:
             required("herdr_pane", "FMVOICE_HERDR_PANE"),
             required("herdr_session", "FMVOICE_HERDR_SESSION"),
             float(data.get("transport_timeout", 5)), float(data.get("claim_timeout", 15)),
-            float(data.get("poll_interval", 0.25)), data.get("notifications", {}),
+            float(data.get("poll_interval", 0.25)), data.get("notifications", {}), data.get("gateway", {}),
         )
         if any(not math.isfinite(v) or v <= 0 for v in
                (cfg.transport_timeout, cfg.claim_timeout, cfg.poll_interval)):

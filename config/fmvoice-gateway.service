@@ -1,0 +1,19 @@
+[Unit]
+Description=First Mate private HTTP voice gateway
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/fmvoice/venv/bin/fmvoice --config %h/.config/fmvoice/config.toml gateway
+EnvironmentFile=%h/.config/fmvoice/gateway.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/fmvoice
+
+[Install]
+WantedBy=default.target
