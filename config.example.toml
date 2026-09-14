@@ -1,0 +1,18 @@
+# Fill locally. Environment variables override these values (see README).
+firstmate_home = ""
+database = "~/.local/state/fmvoice/jobs.sqlite3"
+herdr_socket = ""
+herdr_session = ""
+herdr_pane = ""
+transport_timeout = 5
+claim_timeout = 15
+poll_interval = 0.25
+
+[notifications]
+# Captain's selected provider. Disabled until explicitly configured locally.
+provider = "ntfy"
+enabled = false
+server = ""
+topic_env = "FMVOICE_NTFY_TOPIC"
+token_env = "FMVOICE_NTFY_TOKEN"
+timeout = 5

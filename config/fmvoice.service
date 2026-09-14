@@ -1,0 +1,15 @@
+[Unit]
+Description=First Mate asynchronous voice worker
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/fmvoice/venv/bin/fmvoice --config %h/.config/fmvoice/config.toml worker
+EnvironmentFile=-%h/.config/fmvoice/notifications.env
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
