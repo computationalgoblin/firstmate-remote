@@ -1,4 +1,4 @@
-# Gateway HTTP privado (Fase 3)
+# Gateway HTTP privado (Fases 3–4)
 
 El gateway es un transporte de la misma `Repository` SQLite que usa la CLI. El worker sigue ejecutando `JobManager` y entregando eventos a ntfy. Arrancar el gateway no arranca el worker, First Mate ni Herdr. Salud HTTP comprueba acceso a la base, no disponibilidad del primario. Una petición aceptada con el worker parado queda en cola.
 
@@ -46,9 +46,11 @@ El gateway es un transporte de la misma `Repository` SQLite que usa la CLI. El w
 
 No se ha configurado Tailscale ni se han generado credenciales en esta entrega. El repositorio permanece privado.
 
+Al actualizar desde Fase 3, haz backup privado de SQLite y actualiza gateway/worker/CLI juntos. Para durante esa actualización solo los servicios de este paquete, `fmvoice.service` y `fmvoice-gateway.service`; no First Mate ni Herdr. Al abrir la base se aplica transaccionalmente la migración v2: añade un índice parcial de eventos hablables, sin alterar IDs, historial ni flags ntfy. El binario anterior rechaza la versión v2, por lo que no debe quedar un worker antiguo usando esa base. Después arranca los servicios actualizados; el worker reconcilia el turno existente según el contrato de recuperación. No se ha realizado despliegue en esta entrega.
+
 ## Contrato
 
-Todas las rutas requieren `Authorization: Bearer <token privado>`. POST usa `Content-Type: application/json` (opcional `; charset=utf-8`) y `Content-Length`. No se admiten query strings, slash final, aliases, campos desconocidos ni cuerpos en GET. Las respuestas son JSON UTF-8, sin caché y con cierre de conexión. No hay CORS, páginas, redirecciones ni acceso a ficheros.
+Todas las rutas requieren `Authorization: Bearer <token privado>`. POST usa `Content-Type: application/json` (opcional `; charset=utf-8`) y `Content-Length`. Solo `/voice/events` admite query string, con los parámetros descritos abajo. No se admiten slash final, aliases, campos desconocidos ni cuerpos en GET. Las respuestas son JSON UTF-8, sin caché y con cierre de conexión. No hay CORS, páginas, redirecciones ni acceso a ficheros. «Público» describe el esquema permitido al cliente; nunca acceso anónimo.
 
 | Método/ruta | Cuerpo | Resultado |
 | --- | --- | --- |
@@ -56,6 +58,7 @@ Todas las rutas requieren `Authorization: Bearer <token privado>`. POST usa `Con
 | `POST /jobs` | `request_id`, `prompt`; opcional `voice_session_id` | `202`, recibo durable inmediato |
 | `GET /jobs/{id}` | ninguno | `200`, estado público del job |
 | `GET /jobs/pending-input` | ninguno | `200`, `jobs` con preguntas y `has_more` |
+| `GET /voice/events?after=0&limit=20` | ninguno | `200`, feed de voz con `events`, `next_cursor`, `has_more` |
 | `POST /jobs/{id}/reply` | `request_id`, `prompt`, `input_revision` | `202`, continuación del mismo job/sesión |
 | `POST /jobs/{id}/cancel` | `{}` | `202`, cancelación aplicada o intención durable |
 
@@ -75,9 +78,34 @@ El recibo para los tres POST contiene exclusivamente:
 
 `accepted` significa commit confirmado. No implica claim, ejecución ni finalización. Un reintento puede devolver `running`, `waiting_for_input`, `completed`, `failed` o `cancelled`: sigue siendo el mismo recibo válido. Nunca espera a First Mate, consulta Herdr ni ejecuta un tick del manager.
 
-GET devuelve únicamente `id`, `voice_session_id`, `state`, `created_at`, `updated_at`, `cancel_requested`, `spoken_response`, `question` y, mientras espera input, `input_revision`. No devuelve `request_id` original, prompt, `full_response`, errores internos, identidades, eventos, razonamiento, herramientas, logs ni rutas. Los timestamps son segundos Unix. Solo la pregunta o `spoken_response` sirven para voz; los campos estructurados de voz mantienen el límite semántico descrito en [integración](integration.md): no existe un filtro que garantice el contenido de un campo válido generado por el modelo.
+Los GET de jobs devuelven únicamente `id`, `voice_session_id`, `state`, `created_at`, `updated_at`, `cancel_requested`, `spoken_response`, `question` y, mientras espera input, `input_revision`. No devuelven `request_id` original, prompt, `full_response`, errores internos, identidades, eventos de ejecución, razonamiento, herramientas, logs ni rutas. Los timestamps son segundos Unix. Solo la pregunta o `spoken_response` sirven para voz; los campos estructurados de voz mantienen el límite semántico descrito en [integración](integration.md): no existe un filtro que garantice el contenido de un campo válido generado por el modelo.
 
 `pending-input` devuelve hasta 100 jobs, ordenados por creación/ID. `has_more=true` indica que la lista está truncada: jamás se interpreta una lista truncada como «solo existe una pregunta». Se puede seleccionar un elemento explícito de la lista visible; para acceder a los restantes hay que resolver/cancelar preguntas anteriores o usar la CLI administrativa. No hay selección automática por texto coincidente ni por «más reciente».
+
+## Feed de voz v1: cursor y paginación sin confirmación remota
+
+`GET /voice/events` acepta `after` (predeterminado `0`, entero entre `0` y `9007199254740991`) y `limit` (predeterminado `20`, entero entre `1` y `50`). Solo dígitos decimales canónicos: sin signo, ceros iniciales salvo `0`, fracciones, exponentes ni codificación porcentual. Cualquier orden de parámetros es válido; claves desconocidas, repetidas, vacías o fuera de rango dan `400/invalid_query`. Un cursor superior al último ID persistido da `409/cursor_ahead`, útil para detectar una base restaurada o configuración equivocada. El rango numérico mantiene enteros exactos en clientes JSON; si la base lo agotara, el feed falla sin omitir eventos.
+
+Ejemplo, dos eventos cercanos (IDs ilustrativos):
+
+```json
+{
+  "events": [
+    {"event_id": 12, "job_id": "7d9884e8-90c7-4fd9-8ee1-c9a4aadca630", "event_type": "completed", "spoken_response": "Listo.", "at": 1789380000.0},
+    {"event_id": 15, "job_id": "814a8d99-f3c7-4e4b-b15e-273eeea386c1", "event_type": "needs_input", "question": "¿Continuamos?", "at": 1789380000.0}
+  ],
+  "next_cursor": 15,
+  "has_more": false
+}
+```
+
+Cada evento contiene **exactamente cinco campos**: `event_id`, `job_id`, `event_type`, `at` y **uno** de `question` (solo `needs_input`) o `spoken_response` (`completed`, `failed`, `cancelled`). El texto tiene 1–900 caracteres y no es blanco. Solo se selecciona el canal `user` y esos cuatro tipos; nunca se serializa el payload entero ni se consulta la respuesta actual del job para sustituir el evento histórico. Un evento de voz corrupto produce `503/storage_unavailable`, sin filtrarlo ni saltarlo.
+
+Los IDs proceden del `AUTOINCREMENT` existente, no de timestamps: son crecientes dentro de esta base, estables entre reinicios y pueden tener huecos. SQLite serializa las escrituras y confirma resultado/evento juntos. La selección usa `id > after`, orden ascendente y una fila extra para `has_more`; ese lookahead **no** se incluye en `next_cursor`. Los resultados confirmados durante o después de una página se recuperan en la siguiente consulta. `has_more=false` describe ese snapshot, no impide llegadas posteriores.
+
+`next_cursor` es el último ID **devuelto**, o el `after` recibido cuando `events=[]`. No es una confirmación. GET no altera `notified`, los eventos, jobs ni ningún estado de escucha; un GET perdido o repetido vuelve a entregar los mismos elementos, más las nuevas llegadas que quepan. ntfy y cada dispositivo tienen progreso independiente. Guarda el cursor local solo tras pronunciar **cada elemento**; nunca copies `next_cursor` al empezar o tras leer únicamente el primero. Si se cae después del audio y antes del guardado, se repite ese audio: se prioriza repetición sobre pérdida.
+
+Las preguntas permanecen en el historial aunque ya estén respondidas. Para responder usa `/jobs/pending-input` y la revisión vigente; no se responde directamente desde el feed. No hay purga automática ni ventana temporal de resultados. La garantía depende de conservar esta base y su historial. No borres eventos pendientes de lectores ni sustituyas SQLite silenciosamente. Al cambiar/restaurar la base, restablece conscientemente el cursor local a `0` para releer lo conservado: IDs de bases distintas no son comparables, incluso si el cursor cabe en ambas. La pérdida física de SQLite no puede recuperarse con un cursor.
 
 ## Reintentos, carreras y cancelación
 

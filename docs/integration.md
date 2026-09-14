@@ -1,4 +1,4 @@
-# Integración de Fases 2–3
+# Integración de Fases 2–4
 
 ## Evidencia y alcance
 
@@ -32,7 +32,7 @@ La respuesta del agente debe incluir un objeto JSON (solo o en el último bloque
 | Módulo | Responsabilidad |
 | --- | --- |
 | `domain.py` | Estados, transiciones y validación de respuestas de voz |
-| `schema.sql`, `repository.py` | Migración v1, jobs, turnos, eventos y outbox en SQLite |
+| `schema.sql`, `repository.py` | Migraciones v1–v2, jobs, turnos, eventos y outbox en SQLite |
 | `manager.py` | Cola serial, entrega, observación y reconciliación |
 | `herder/adapter.py` | Contrato de ficheros, identidad, claim y retirada atómica |
 | `herder/herdr.py` | RPC asíncrono real con límite por intercambio |
@@ -43,7 +43,7 @@ La respuesta del agente debe incluir un objeto JSON (solo o en el último bloque
 
 La CLI confirma el commit sin esperar a Herdr. `BEGIN IMMEDIATE`, restricciones únicas e índices serializan escrituras y reintentos; estados y eventos se confirman juntos. La migración usa `PRAGMA user_version` y transacción, rechaza versiones desconocidas y fija la base a un home canónico. Un lock de sistema operativo por home impide workers simultáneos incluso si sus clientes eligieron bases distintas.
 
-Los turnos conservan su resultado individual al responder a una pregunta. Los eventos distinguen explícitamente `channel=user` de `channel=internal`. El outbox consulta exclusivamente eventos de usuario y selecciona únicamente los campos de voz; ningún fallo de ntfy altera el estado del trabajo.
+Los turnos conservan su resultado individual al responder a una pregunta. Los eventos distinguen explícitamente `channel=user` de `channel=internal`. El feed de Fase 4 reutiliza sus IDs monotónicos y snapshots históricos; [cursor y retención](http-api.md#feed-de-voz-v1-cursor-y-paginación-sin-confirmación-remota) forman parte del contrato público autenticado. Ningún GET confirma escucha ni cambia el outbox. El outbox consulta exclusivamente eventos de usuario y selecciona únicamente los campos de voz; ningún fallo de ntfy altera el estado del trabajo.
 
 ## Recuperación y cancelación
 
