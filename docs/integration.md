@@ -1,4 +1,4 @@
-# Integración de Fase 2
+# Integración de Fases 2–3
 
 ## Evidencia y alcance
 
@@ -39,6 +39,7 @@ La respuesta del agente debe incluir un objeto JSON (solo o en el último bloque
 | `worker.py` | Bucle independiente, señales y exclusión por home |
 | `notifications/` | Interfaz Notifier, outbox y proveedor ntfy |
 | `cli.py` | Clientes locales breves sobre SQLite |
+| `gateway.py` | Transporte HTTP autenticado y acotado, sin ejecución de jobs |
 
 La CLI confirma el commit sin esperar a Herdr. `BEGIN IMMEDIATE`, restricciones únicas e índices serializan escrituras y reintentos; estados y eventos se confirman juntos. La migración usa `PRAGMA user_version` y transacción, rechaza versiones desconocidas y fija la base a un home canónico. Un lock de sistema operativo por home impide workers simultáneos incluso si sus clientes eligieron bases distintas.
 
@@ -60,8 +61,8 @@ La extensión puede barrer ficheros de más de 24 horas. Un claim residual tras 
 
 Estas restricciones se manejan sin ampliar el contrato. No se implementa ejecución exactamente una vez ante pérdida externa de todos los registros, ni cancelación fuerte de tareas delegadas: Escape interrumpe el turno del primario. Si se necesitara una garantía mayor, haría falta elevar el cambio del contrato de First Mate/Herdr.
 
-## Siguiente fase
+## Transporte iPhone y siguientes fases
 
-La elección ntfy está registrada y el proveedor mínimo funciona como consumidor desacoplado. Quedan fuera el Shortcut de iOS, HTTP/autenticación remota, TTS, APNs y observación de tareas delegadas.
+La Fase 3 añade [HTTP autenticado](http-api.md) y el [flujo de construcción en Shortcuts](ios-shortcut.md), sin aplicación nativa. La revisión de pregunta se verifica dentro de la transacción de reply; CLI y gateway comparten idempotencia y contexto. La elección ntfy sigue como consumidor desacoplado. Quedan fuera TTS automático de resultados, APNs y observación de tareas delegadas. La prueba física en iPhone/AirPods se documenta como validación de instalación pendiente.
 
 `waiting_for_input` proviene únicamente de `needs_input=true` en la respuesta estructurada. Herdr solo informa estados operativos; `idle` y `blocked` no permiten deducir una pregunta. La correlación futura de decisiones/resultados delegados debe consultar los registros durables de First Mate (`home-summary.json`, holds, decisiones y estados de tareas), tal como recomienda el spike, sin convertir sus logs en voz.

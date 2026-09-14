@@ -6,3 +6,6 @@ build/
 dist/
 *.sqlite3*
 config.toml
+
+# Private service credentials
+*.env

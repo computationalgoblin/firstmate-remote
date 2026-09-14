@@ -10,10 +10,10 @@ from .domain import State, TERMINAL, Outcome, validate_transition, transcript
 
 
 class Repository:
-    def __init__(self, path: Path, home: Path):
+    def __init__(self, path: Path, home: Path, *, timeout=10):
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         path.touch(mode=0o600, exist_ok=True)
-        self.db = sqlite3.connect(path, timeout=10, isolation_level=None)
+        self.db = sqlite3.connect(path, timeout=timeout, isolation_level=None)
         self.db.row_factory = sqlite3.Row
         try:
             self.db.execute("PRAGMA foreign_keys=ON")
@@ -62,6 +62,16 @@ class Repository:
     def jobs(self):
         return [dict(r) for r in self.db.execute("SELECT * FROM jobs ORDER BY created_at,id")]
 
+    def pending_input(self, limit=101):
+        # One snapshot includes the revision, so a subsequent question can never
+        # inherit a reply selected from an older pending-input response.
+        return [dict(r) for r in self.db.execute(
+            "SELECT jobs.*, (SELECT MAX(seq) FROM turns WHERE job_id=jobs.id) AS input_revision "
+            "FROM jobs WHERE state=? ORDER BY created_at,id LIMIT ?", (State.WAITING, limit))]
+
+    def input_revision(self, job_id):
+        return self.db.execute("SELECT MAX(seq) FROM turns WHERE job_id=?", (job_id,)).fetchone()[0]
+
     def turns(self, job_id):
         return [dict(r) for r in self.db.execute("SELECT * FROM turns WHERE job_id=? ORDER BY seq", (job_id,))]
 
@@ -73,7 +83,7 @@ class Repository:
         validate_transition(self.get(job_id)["state"], state)
         self.db.execute("UPDATE jobs SET state=?,updated_at=? WHERE id=?", (state, time.time(), job_id))
 
-    def enqueue(self, prompt, request_id, *, job_id=None, voice_session_id=None):
+    def enqueue(self, prompt, request_id, *, job_id=None, voice_session_id=None, input_revision=None):
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("Prompt must not be empty")
         if not isinstance(request_id, str) or not 0 < len(request_id) <= 200:
@@ -81,7 +91,8 @@ class Repository:
         with self.transaction():
             existing = self.db.execute("SELECT job_id,kind FROM turns WHERE request_id=?", (request_id,)).fetchone()
             if existing:
-                if (job_id and existing['job_id'] != job_id) or (job_id is None and existing['kind'] != 'request'):
+                if ((job_id and existing['job_id'] != job_id)
+                        or existing['kind'] != ('reply' if job_id else 'request')):
                     raise ValueError("request_id already belongs to another operation")
                 return self.get(existing['job_id'])
             kind = "reply" if job_id else "request"
@@ -90,6 +101,8 @@ class Repository:
                 job = self.get(job_id)
                 if job['state'] != State.WAITING:
                     raise ValueError("Job is not waiting for input")
+                if input_revision is not None and input_revision != self.input_revision(job_id):
+                    raise ValueError("Question changed")
                 voice_session_id = job['voice_session_id']
                 self.transition(job_id, State.QUEUED)
                 self.db.execute("UPDATE jobs SET spoken_response='',full_response='',question='',error='' WHERE id=?", (job_id,))
