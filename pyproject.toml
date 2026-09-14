@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "firstmate-voice"
+version = "0.2.0"
+description = "Persistent local voice job queue for the live First Mate session"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+fmvoice = "firstmate_voice.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["firstmate_voice*"]
+
+[tool.setuptools.package-data]
+firstmate_voice = ["schema.sql"]
