@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "firstmate-voice"
-version = "0.2.0"
+version = "0.3.0"
 description = "Persistent local voice job queue for the live First Mate session"
 requires-python = ">=3.11"
 dependencies = []
