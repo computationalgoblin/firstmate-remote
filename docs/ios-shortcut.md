@@ -1,6 +1,8 @@
-# iPhone: dictar, enviar y continuar
+# iPhone: enviar, escuchar y responder sin terminal
 
-Este flujo usa Atajos (Shortcuts), HTTPS privado de Tailscale y el gateway de [Fase 3](http-api.md). Tras el commit solo pronuncia **«Enviado»** y termina. El worker continúa en el PC y ntfy entrega preguntas/resultados. No abre Herdr ni una terminal móvil, no sondea el job y no necesita una aplicación iOS nativa.
+Este flujo usa Atajos (Shortcuts), HTTPS privado de Tailscale y el gateway de [Fases 3–4](http-api.md). «First Mate» envía, pronuncia **«Enviado»** tras el commit y termina. El worker continúa en el PC; **ntfy avisa y el usuario inicia «Leer First Mate»** para escuchar resultados o preguntas. «First Mate Responder» permite contestarlas. El MVP funciona bajo demanda sin conocer cada job ni usar una terminal. La llegada de un push no ejecuta un Shortcut ni `Speak Text`; Announce Notifications es una mejora opcional, pendiente de prueba física.
+
+La decisión sigue el informe autorizado `investigar-ntfy-ios-voz/report.md` del 14-09-2026. Su propuesta conceptual se concreta aquí como `/voice/events`, paginado, y el cursor se guarda **después** de terminar el audio, no antes. Las instrucciones siguientes son una receta de construcción, todavía no una validación en hardware.
 
 ## Preparación en el dispositivo
 
@@ -86,11 +88,95 @@ Al acabar el dictado, el único intercambio obligatorio de red es el POST. En un
 
 Un `409/conflict` con este borrador significa que no puede aplicarse a la pregunta seleccionada (o que el ID pertenece a otra operación). No cambies la revisión y reenvíes automáticamente. Conserva el fichero para revisión, consulta de nuevo las preguntas y, después de decidir descartar esa respuesta obsoleta, archívalo fuera de `pending.json` y vuelve a ejecutar «First Mate Responder» para dictar una respuesta nueva. Un simple timeout se resuelve con **reintentar el borrador**, sin consultar ni elegir de nuevo. El servidor comprueba revisión y encolado en la misma transacción.
 
+## Atajo «Leer First Mate»: cursor local y lectura ordenada
+
+Este atajo ignora la entrada que reciba por URL y solo contacta la `base_url` de «First Mate Config». No toma tokens, URLs ni IDs de ntfy. No requiere que una notificación haya llegado: puede leer todo el historial conservado desde `after=0`. La voz procede exclusivamente de `question` o `spoken_response`, jamás del diccionario completo.
+
+Usa **un cursor por dispositivo y base** en `FirstMate/voice-cursor.json`, separado de `pending.json`. Ejecuta un solo lector a la vez; no compartas el fichero entre iPhones por iCloud. Dos ejecuciones solapadas pueden repetir audio o sobrescribir un cursor con otro anterior. Esta receta no ofrece exclusión mutua de Atajos. No conviertas un fichero `busy` residual en un bloqueo permanente.
+
+Formato local (URL ilustrativa; sustituir por la configuración privada):
+
+```json
+{"base_url":"https://pc.example.ts.net","after":0}
+```
+
+`after` es **Número**, entero de `0` a `9007199254740991`. No es una fecha, contador de jobs ni posición en la página. No guardes `has_more`, texto leído, preguntas ni credenciales en este fichero. Si el archivo falta en el primer uso, empieza en `0`. Si se pierde después, releer desde `0` repite lo conservado. Si está corrupto, detén la lectura y restablécelo conscientemente a `0` desde Archivos/Atajos; nunca adivines el último ID. Un fallo de sobrescritura puede dejar un fichero inválido: esta recuperación favorece repetición.
+
+### Construcción, acción por acción
+
+1. **Ejecutar atajo** «First Mate Config» → `Config`. **Obtener valor del diccionario** para `base_url` → `BaseURL` y `token` → `Token`. Exige ambos como texto no vacío; `BaseURL` debe ser la URL HTTPS fija seleccionada durante la instalación, sin query, fragmento ni slash final. Para `Token`, **Coincidir texto** `^[A-Za-z0-9_-]{32,256}$`; exige una coincidencia completa. Una configuración inválida: **Leer texto** «Revisa la configuración privada de First Mate» y **Detener este atajo**. Nunca leas el token.
+2. **Obtener archivo de carpeta**, carpeta `FirstMate`, ruta `voice-cursor.json`, «Error si no se encuentra» desactivado. Si no hay archivo: **Número** `0` → `Cursor`. Si existe: **Obtener diccionario de la entrada** → `Guardado`; exige exactamente las claves `base_url`, `after`, URL igual a `BaseURL` y `after` como entero dentro del rango anterior → `Cursor`. Ante URL distinta, campo ausente, JSON inválido o número inválido, detén sin GET ni sobrescritura; revisa configuración/archivo. Al cambiar de base no reutilices su cursor aunque tenga el mismo dominio: restablécelo conscientemente a `0`.
+3. **Número** `0` → `Leidos`. **Repetir** `10` veces (máximo diez páginas por invocación). Dentro del bucle, **Establecer variable** `CursorPeticion` = `Cursor`. Para interpolarlo sin formato numérico regional, crea un **Diccionario** temporal con `after` Número `CursorPeticion`, **Obtener texto de la entrada** para serializar JSON, **Coincidir texto** `"after"\s*:\s*([0-9]+)\s*[,}]` y **Obtener grupo del texto coincidente**, grupo `1` → `CursorURL`; exige exactamente una coincidencia. No uses fechas ni números con separadores de miles. **Texto** `BaseURL/voice/events?after=CursorURL&limit=5`, insertando ambas variables → **URL**.
+4. **Obtener contenido de URL**, método **GET**, cabecera `Authorization` = `Bearer ` seguido de `Token`, sin cuerpo. **Obtener diccionario de la entrada** → `Pagina`. No añadas reintento automático ni sondeo con «Esperar». Si Atajos interrumpe por red/HTTP/JSON, no se ejecutan acciones posteriores y el cursor durable anterior se conserva. Si devuelve un diccionario con `error`, aplica la tabla de errores inferior y detén.
+5. Valida **toda la página** mediante las acciones y reglas de la siguiente sección, antes de hablar o guardar. Conserva la lista `events` → `Eventos` y `has_more` → `HayMas`. `next_cursor` sirve para comprobar el esquema; **no lo guardes como progreso**.
+6. **Contar** `Eventos`. Si es cero: si `Leidos=0`, **Leer texto** «No hay respuestas nuevas»; **Detener este atajo**. No cambies el archivo por una página vacía.
+7. **Repetir con cada elemento** de `Eventos`, en el orden recibido. **Obtener valor del diccionario** `event_type`. Si es `needs_input`, extraer **solo** `question` → `Voz`; en los otros tres tipos, extraer **solo** `spoken_response` → `Voz`. **Leer texto** `Voz`, español, desplegar opciones y activar **Esperar hasta que termine** (Wait Until Finished). No uses reproducción en segundo plano. Opcionalmente, antes de una pregunta, leer el literal «Pregunta del historial; usa First Mate Responder para consultar las pendientes»; nunca tratarla como selección de respuesta.
+8. **Solo después de volver de Leer texto**, extrae `event_id` del elemento → `Candidato`. **Diccionario**: `base_url` Texto `BaseURL`, `after` Número `Candidato`. **Obtener texto de la entrada** para serializar a JSON; **Definir nombre** `voice-cursor.json`; **Guardar archivo** en `FirstMate`, «Preguntar dónde guardar» desactivado, «Sobrescribir si existe» activado. A continuación **Obtener archivo de carpeta** de esa ruta, convertir a diccionario y verificar URL y `after=Candidato`. Si falla lectura/escritura/verificación, detén sin hablar el siguiente elemento. Tras verificar, **Establecer variable** `Cursor=Candidato` y **Calcular** `Leidos+1` → `Leidos`.
+9. Tras **Fin de repetir con cada elemento**, si `HayMas=false`, **Detener este atajo**. Si es verdadero, la siguiente iteración del bucle exterior pide la página siguiente con `Cursor`, ya guardado elemento a elemento. No añadas `+1` al ID: el servidor usa `id > after` y puede haber huecos.
+10. Tras las diez iteraciones, **Leer texto** «Quedan respuestas. Vuelve a ejecutar Leer First Mate para continuar» y detener. El límite evita una sesión interminable; la siguiente invocación recupera lo restante. Una nueva llegada después de `has_more=false` se escucha al volver a invocar, sin pérdida.
+
+La finalización de «Leer texto» es la señal disponible para guardar; no demuestra que el usuario haya oído el audio. Si el volumen o la ruta eran incorrectos, puede restablecer el cursor a un ID anterior conocido o a `0` para repetir. Si se cancela antes del guardado, el elemento vuelve a salir; si se guardó, se continúa con el siguiente. **Nunca** coloques el guardado antes de la acción de voz ni al inicio de una página.
+
+### Validación del esquema en Atajos
+
+Construye estas comprobaciones dentro del paso 5 con **Obtener valor del diccionario**, **Todas las claves**, **Contar**, **Obtener tipo**, **Coincidir texto**, **Si** y **Repetir con cada elemento**. Cada condición fallida ejecuta **Leer texto** con el literal «Respuesta de First Mate inválida; no se avanzó la lectura» y **Detener este atajo**. Si una conversión da un error nativo de Atajos, deja que interrumpa. No uses conversiones de texto a número como sustituto de comprobar el tipo JSON.
+
+Para comprobar un conjunto exacto de claves, obtén **Todas las claves**, cuenta y exige el tamaño indicado; crea una **Lista** de claves permitidas y recorre las recibidas: si la lista no contiene una, detén. Para cada número exige tipo Número, finito, rango indicado e igualdad con su valor **Redondear número** a unidades. Los booleanos deben ser booleanos JSON, no texto ni 0/1: si tu iOS los presenta como Número en «Obtener tipo», convierte el diccionario a texto JSON y exige una coincidencia `"has_more"\s*:\s*(true|false)\s*[,}]`. Para `after`, `next_cursor` y `event_id` comprueba además en su diccionario serializado que el valor no está entre comillas ni es `true/false`: patrón `"CLAVE"\s*:\s*[0-9]+\s*[,}]`, sustituyendo CLAVE. En la prueba de construcción incluye expresamente `"1"`, `true`, `1.5` y campos ausentes como casos inválidos.
+
+| Objeto | Comprobaciones obligatorias |
+| --- | --- |
+| `Pagina` | Diccionario con exactamente `events`, `next_cursor`, `has_more`; `events` es Array/lista JSON con 0–5 elementos, `next_cursor` entero en rango, `has_more` Booleano. No aceptar diccionarios como lista. |
+| Cada evento | Diccionario con exactamente cinco claves: `event_id`, `job_id`, `event_type`, `at` y el campo de voz permitido por el tipo. |
+| `event_id` | Número entero positivo hasta `9007199254740991`, estrictamente mayor que el anterior (inicializa `Anterior=CursorPeticion`, actualízalo en cada iteración de validación). No exigir IDs consecutivos. |
+| `job_id` | Texto que coincide completamente con `^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$`. |
+| `event_type` | Texto, miembro exacto de la Lista `needs_input`, `completed`, `failed`, `cancelled`. |
+| Voz | `needs_input` exige solo `question`; los demás, solo `spoken_response`. Texto no blanco, **Contar caracteres** entre 1 y 900. Nunca usar un campo alternativo si falta el esperado. |
+| `at` | Número finito en segundos Unix; no ordenar ni calcular el cursor con él. Para probar finitud sin formato regional, usa el JSON serializado del evento y exige `"at"\s*:\s*-?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?\s*[,}]`. |
+| Coherencia | Si la lista está vacía: `has_more=false` y `next_cursor=CursorPeticion`. Si no: `next_cursor` igual al último `event_id`. Si `has_more=true`: exactamente cinco elementos. |
+
+Los nombres de tipos y acciones varían con el idioma/iOS. Comprueba en el dispositivo que una lista vacía y una lista de un elemento se conservan como arrays al leer `events`; usa el tipo JSON del diccionario serializado (`"events"\s*:\s*\[`) si Atajos presenta el array vacío como «sin valor». No transformes ese caso en una llamada ni en un avance de cursor. Las pruebas Python validan el contrato del gateway; no ejecutan estas acciones de Apple.
+
+### Vacío, red, autenticación y repetición
+
+| Situación | Comportamiento del lector |
+| --- | --- |
+| `events=[]`, sin lecturas previas en esta invocación | «No hay respuestas nuevas», cursor intacto. No implica que los jobs hayan terminado. |
+| Modo avión, Tailscale desconectado, timeout o respuesta perdida | Atajos puede detenerse con su error nativo. Repite «Leer First Mate» cuando vuelva la red; conserva el cursor, sin saltar al final. |
+| `401` / `error=unauthorized` | Si el cuerpo llega, leer «Revisa el token privado de First Mate» y detener. Actualizar «First Mate Config» por medio privado; nunca leer el error completo ni el token. |
+| `429`, `503`, `408` | Si el cuerpo llega, leer «First Mate no está disponible. Reintenta más tarde» y detener; dejar pasar al menos 60 segundos antes de reintentar `429/503`. No bucle agresivo. |
+| `409/cursor_ahead` | «Revisa el cursor y la base de First Mate», detener. Revisar la base/URL y restablecer conscientemente a `0` si hubo restauración/cambio. |
+| `400`, otro error o esquema inesperado | «Respuesta de First Mate inválida; no se avanzó la lectura», detener. Corregir la construcción/configuración conservando el archivo. |
+| Interrupción después de hablar y antes de guardar | Se vuelve a pronunciar ese evento al reintentar. No deduplicar por texto, hora, job ni aviso ntfy. |
+| Dos avisos cercanos o duplicados | Se recorren ambos eventos en orden de ID. Tocar de nuevo consulta a partir del cursor local; un push nunca lo modifica. |
+| Pregunta histórica ya contestada | Puede escucharse otra vez, pero «First Mate Responder» consulta el estado actual antes de elegir y dictar. |
+
+La acción estándar de red puede detener el atajo antes de entregar el cuerpo de error y no ofrece aquí un `try/catch` portátil. Por eso no se promete pronunciar una frase de error en todos los iPhones: el requisito de conservación del cursor no depende de capturar ese error.
+
+## ntfy en iOS: aviso y apertura opcional al tocar
+
+En el servidor propio, configura HTTPS, `auth-default-access: deny-all`, ACL por tema, credencial de publicación separada de la de lectura del iPhone y un tema aleatorio. Para entrega iOS inmediata, ntfy documenta `upstream-base-url: https://ntfy.sh`; el upstream recibe hash del URL del tema e ID de mensaje y el teléfono recupera el contenido. Revisa [control de acceso y entrega iOS de ntfy](https://docs.ntfy.sh/config/#ios-instant-notifications). El token HTTP del gateway es distinto del de ntfy.
+
+Instala ntfy iOS, añade servidor y credencial de lectura, y suscríbete al tema privado. Permite notificaciones, entrega inmediata y pantalla bloqueada; excluye ntfy del resumen programado. Los cuerpos contienen texto privado de voz: configura vistas previas según tu privacidad y valida qué aparece en pantalla y se anuncia.
+
+El publicador admite `notifications.click` vacío (predeterminado) o exactamente:
+
+```toml
+click = "shortcuts://run-shortcut?name=Leer%20First%20Mate"
+```
+
+[ntfy documenta `click`](https://docs.ntfy.sh/publish/#click-action) para abrir un destino al tocar, y [Apple documenta el esquema de ejecución](https://support.apple.com/guide/shortcuts/apd624386f42/ios). La combinación concreta exige **PRUEBA FÍSICA PENDIENTE**. Actívala solo para probar después de construir el atajo; conserva vacío como configuración cotidiana hasta validar. No hay acciones HTTP ni parámetros con texto, secretos o IDs. El enlace no autoriza el GET; el atajo carga su propia configuración. Un toque puede pedir desbloqueo. La mera llegada nunca se presenta como disparador automático.
+
+## AirPods, Focus, bloqueo y anuncios opcionales
+
+Conecta los AirPods y comprueba la salida activa y el volumen antes de invocar «Leer First Mate». En cada Focus relevante, permite ntfy explícitamente si deseas recibir avisos: la prioridad del push no constituye permiso para saltarlo. Apple explica el [control de apps en Focus](https://support.apple.com/en-us/105112). **Pendiente:** silencio activado/desactivado, Focus permitiendo/silenciando ntfy, música en curso, llamada y un solo AirPod; registra ruta de audio, volumen y pausas de música. No se garantiza audio durante llamadas ni por auriculares desconectados.
+
+Opcional: Ajustes → Notificaciones → **Anunciar notificaciones**, activar y comprobar si ntfy aparece entre apps compatibles; si aparece, habilitar sus anuncios. Apple requiere auriculares compatibles puestos, teléfono bloqueado y pantalla apagada; las respuestas habladas al anuncio dependen del soporte de la app. Véase [Announce Notifications](https://support.apple.com/en-us/102536). **Pendiente con ntfy:** lectura íntegra, latencia, vistas previas Always/When Unlocked/Never y compatibilidad real. No uses «Responder» al anuncio como sustituto de «First Mate Responder» ni marques el feed como escuchado por un anuncio: puede repetirse después y es deliberado.
+
 ## Action Button, Siri y prueba en iPhone
 
 Primero ejecuta cada atajo desde Atajos, con el teléfono desbloqueado. Autoriza micrófono/dictado, acceso a la carpeta y conexión a la URL privada cuando iOS lo solicite. Comprueba que el diccionario guardado se vuelve a leer con sus tipos correctos. No publiques capturas con configuración o dictados privados.
 
-En un iPhone compatible: **Ajustes → Botón de acción → Atajo → Elegir un atajo → First Mate**. Mantén pulsado para ejecutarlo. Para cambiar entre envío y respuesta desde el mismo botón, puedes crear un atajo lanzador con **Elegir del menú** («Nueva petición» / «Responder») que ejecute uno de los dos; no adivines automáticamente la intención del dictado. Apple describe el [Action button](https://developer.apple.com/design/human-interface-guidelines/action-button) y la [ejecución de atajos con Siri](https://support.apple.com/en-gb/HT209055). Con Siri, pronuncia el nombre: «Siri, First Mate» o «Siri, First Mate Responder»; iOS puede pedir desbloqueo según las acciones y permisos.
+Para acceso directo a lectura en un iPhone compatible: **Ajustes → Botón de acción → Atajo → Elegir un atajo → Leer First Mate**. Mantén pulsado para ejecutarlo. Si prefieres conservar el botón para enviar, deja «First Mate» y usa Siri para leer; también puedes crear un lanzador **Elegir del menú** («Nueva petición» / «Leer resultados» / «Responder») que ejecute el atajo elegido. Apple describe el [Action Button](https://support.apple.com/guide/iphone/use-and-customize-the-action-button-iphe89d61d66/ios) y la [ejecución con Siri](https://support.apple.com/guide/shortcuts/apd07c25bb38/ios). Invoca «Siri, Leer First Mate», «Siri, First Mate» o «Siri, First Mate Responder». Comprueba que Siri esté permitida con el dispositivo bloqueado. iOS puede exigir desbloqueo para acciones, archivos o permisos: el fallback del MVP es desbloquear y ejecutar el mismo atajo, sin terminal. La lectura bajo demanda es el contrato; manos libres con pantalla bloqueada sigue pendiente de validación.
 
 Validación manual pendiente en hardware; no se afirma haber probado un iPhone, Siri, AirPods ni entrega ntfy real desde esta entrega:
 
@@ -106,6 +192,17 @@ Validación manual pendiente en hardware; no se afirma haber probado un iPhone, 
 | Pregunta respondida/cancelada desde otro cliente durante el dictado | Conflicto; no contesta una pregunta posterior |
 | Action Button, Siri y AirPods | Dictado y «Enviado» por el dispositivo previsto, sin leer respuesta completa ni diagnósticos |
 | ntfy con pantalla bloqueada | Notificación real de pregunta/resultado según la configuración del proveedor y de iOS |
+| Leer First Mate sin jobs conocidos, sin ntfy y con dos resultados de igual hora | Lee ambos en orden; cursor queda en el segundo |
+| Siete eventos, `limit=5`, otro evento mientras habla | Pagina sin saltos; nuevas llegadas tras el snapshot se recuperan al invocar de nuevo |
+| Cancelar antes de hablar, durante audio y después de audio/antes de guardar | Cursor solo tras finalización y guardado; se admite repetición del último |
+| Cierre y reapertura de Atajos / reinicio del iPhone | Recupera cursor durable y continúa; archivo perdido se recupera desde 0 |
+| Token inválido, modo avión, archivo corrupto, base restaurada | No avanza cursor ni lee JSON/errores privados; recuperación según tabla |
+| Tap ntfy con `click` vacío y luego habilitado | Vacío conserva comportamiento ntfy; habilitado abre atajo solo al tocar; anotar desbloqueo |
+| Siri y Action Button con pantalla bloqueada/apagada y desbloqueada | Anotar permisos y necesidad de Face ID; validar GET, voz y guardado |
+| AirPods, silencio, Focus, música, llamada, un auricular | Anotar salida, volumen y comportamiento; no asumir que silencio/Focus sean equivalentes |
+| Announce Notifications on/off y previews Always/When Unlocked/Never | Registrar tono, texto anunciado y exposición; mejora opcional, no requisito de lectura bajo demanda |
+
+Todas las filas están **PENDIENTES DE PRUEBA FÍSICA**. Usa contenido sintético sin secretos y registra modelo de iPhone/AirPods, versiones de iOS/ntfy, modo de red, fecha, resultado y desbloqueos. Objetivo de instalación: lectura y respuesta correctas en al menos 9/10 intentos por Siri/Action Button, sin perder eventos ni seleccionar otro job. Si el bloqueo impide el flujo, documenta uso desbloqueado como experiencia validada; Announce Notifications no condiciona la aprobación.
 
 Las pruebas automáticas cubren HTTP y procesos locales. Para medir el objetivo móvil, registra solo duración desde final del dictado hasta «Enviado», modo de red y si llegó la notificación; no el token ni contenido privado.
 

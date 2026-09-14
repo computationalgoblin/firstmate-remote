@@ -1,6 +1,6 @@
 # Firstmate Remote
 
-Backend local asíncrono para enviar trabajos a la **sesión viva de First Mate**, cerrar el cliente y consultar o responder después. La Fase 3 del MVP añade un gateway HTTP autenticado y un flujo de iOS Shortcuts a SQLite, cola serial, CLI, worker independiente y notificaciones ntfy. El iPhone dicta, recibe «Enviado» tras persistir el trabajo y termina; el resultado llega después por ntfy. No hay aplicación iOS nativa.
+Backend local asíncrono para enviar trabajos a la **sesión viva de First Mate**, cerrar el cliente y consultar o responder después. La Fase 4 del MVP añade un feed autenticado de voz a SQLite, cola serial, CLI, gateway, worker independiente y notificaciones ntfy. El iPhone dicta, recibe «Enviado» tras persistir el trabajo y termina. ntfy avisa; el usuario inicia **«Leer First Mate»** por Siri, Action Button o Atajos para escuchar resultados y preguntas sin conocer los IDs ni usar una terminal. No hay aplicación iOS nativa ni automatización `push → Speak Text`.
 
 La integración utiliza el contrato real de la extensión de voz de First Mate:
 
@@ -79,7 +79,9 @@ Parar el worker no cancela el turno del primario. Al arrancar, vuelve a observar
 `fmvoice gateway` ejecuta el servicio de envío en `127.0.0.1:8765`, con Bearer obligatorio desde `FMVOICE_API_TOKEN`. Reutiliza SQLite y no depende del turno ni del transporte Herdr para confirmar. Mantén el worker en ejecución para procesar la cola y publicar por ntfy.
 
 - [Despliegue, contrato HTTP, seguridad y operación](docs/http-api.md): servicio `config/fmvoice-gateway.service`, token privado, HTTPS con Tailscale Serve y límites.
-- [Construcción exacta de los atajos en iPhone](docs/ios-shortcut.md): dictado, UUID durable, confirmación, reintento, respuesta a preguntas, Action Button, Siri y pruebas manuales.
+- [Construcción exacta de los atajos en iPhone](docs/ios-shortcut.md): «First Mate», «Leer First Mate» y «First Mate Responder»; cursor durable después de cada lectura, paginación, reintentos, Action Button, Siri y pruebas manuales.
+
+`GET /voice/events?after=0&limit=20` ofrece solo eventos hablables en orden de ID, con `next_cursor` y `has_more`. Repetir GET no consume nada: el Shortcut guarda cada `event_id` **después** de terminar «Leer texto». Si se interrumpe antes de guardarlo, lo repetirá. El feed conserva preguntas históricas; para contestar se consultan las pendientes con «First Mate Responder» y se elige explícitamente si hay varias. No depende de que ntfy haya entregado el aviso. Announce Notifications es una mejora opcional pendiente de prueba física, igual que bloqueo y ruta de audio.
 
 No se publica un `.shortcut` sin verificar. La validación en iPhone/AirPods y la configuración de Tailscale/ntfy del dispositivo quedan como pasos de instalación; la suite prueba el transporte con dobles locales.
 
@@ -116,11 +118,14 @@ server = "https://tu-servidor-ntfy"
 topic_env = "FMVOICE_NTFY_TOPIC"
 token_env = "FMVOICE_NTFY_TOKEN"
 timeout = 5
+click = "" # Opcional; desactivado por defecto.
 ```
 
 Guarda las variables con tus valores reales en `~/.config/fmvoice/notifications.env` con permisos `600`; la unidad systemd lo carga. En primer plano, expórtalas en el entorno. Para un servidor sin autenticación, configura `token_env = ""`. Nunca versiones ese fichero ni el tema.
 
 Se publica por HTTPS con el [formato JSON oficial de ntfy](https://docs.ntfy.sh/publish/#publish-as-json). Solo se envían pregunta o `spoken_response` para `needs_input`, `completed`, `failed` y `cancelled`. No se envían prompts, respuesta detallada, errores técnicos ni logs. No se siguen redirecciones con credenciales. Los fallos del proveedor se reintentan cada 5 s sin modificar el job; tras un crash puede repetirse una notificación (entrega al menos una vez). Activar ntfy más tarde entrega también los eventos pendientes existentes. La configuración del cliente iOS se describe en el flujo de Shortcuts; no se añaden APNs ni reproducción automática del resultado.
+
+Para probar apertura **al tocar** el aviso, configura `click = "shortcuts://run-shortcut?name=Leer%20First%20Mate"`. Solo se acepta esa cadena exacta o `""`; se rechazan otros destinos, parámetros, tipos y claves desconocidas. La URL es fija: no lleva token, job, pregunta ni texto hablado. Mantén el valor vacío hasta validar el enlace en tu iPhone; tocar puede requerir desbloqueo. Consulta [Click action de ntfy](https://docs.ntfy.sh/publish/#click-action) y el [esquema URL de Apple](https://support.apple.com/guide/shortcuts/apd624386f42/ios).
 
 ## Seguridad y depuración
 

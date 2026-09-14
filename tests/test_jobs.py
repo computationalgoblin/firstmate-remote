@@ -292,7 +292,7 @@ class JobsTest(unittest.IsolatedAsyncioTestCase):
             pass
 
     def test_migration_is_reproducible_and_home_bound(self):
-        self.assertEqual(self.repo.db.execute('PRAGMA user_version').fetchone()[0], 1)
+        self.assertEqual(self.repo.db.execute('PRAGMA user_version').fetchone()[0], 2)
         with self.assertRaises(ValueError):
             Repository(self.cfg.database, self.cfg.home / 'other')
         self.assertEqual(self.repo.db.execute('PRAGMA integrity_check').fetchone()[0], 'ok')

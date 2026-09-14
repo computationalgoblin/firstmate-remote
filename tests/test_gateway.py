@@ -87,6 +87,7 @@ class GatewayTest(unittest.TestCase):
 
     def test_authentication_every_route_and_safe_comparison(self):
         paths = [('GET', '/health'), ('GET', '/jobs/pending-input'), ('POST', '/jobs'),
+                 ('GET', '/voice/events?after=0&limit=2'),
                  ('GET', '/jobs/' + '0' * 36), ('POST', '/jobs/' + '0' * 36 + '/reply'),
                  ('POST', '/jobs/' + '0' * 36 + '/cancel')]
         for method, path in paths:
@@ -286,3 +287,164 @@ class GatewayTest(unittest.TestCase):
         self.assertIs(value['has_more'], True)
         self.assertNotIn('PRIVATE', json.dumps(value))
         self.assertEqual(len({job['id'] for job in value['jobs']}), 100)
+
+    def finish_voice(self, rid, state=State.COMPLETED):
+        job = self.repo.enqueue('PRIVATE prompt', rid)
+        turn = self.repo.start_next()
+        with self.repo.transaction():
+            self.repo.event(job['id'], 'completed', {'spoken_response': 'PRIVATE internal'}, channel='internal')
+            self.repo.finish(job['id'], turn['id'], Outcome(state, 'Resultado ' + rid,
+                             full_response='PRIVATE full_response /home/secret tools reasoning',
+                             question='¿Continuar ' + rid + '?', error='PRIVATE diagnostics'))
+        return job
+
+    def feed(self, after=0, limit=20):
+        status, page = self.request(path=f'/voice/events?after={after}&limit={limit}')
+        self.assertEqual(status, 200, page)
+        return page
+
+    def test_voice_feed_order_pagination_arrivals_and_read_only_replay(self):
+        # Equal/backwards wall clocks must not collapse or reorder nearby events.
+        with patch('firstmate_voice.repository.time.time', return_value=100):
+            first = self.finish_voice('one')
+            second = self.finish_voice('two')
+        before = [tuple(r) for r in self.repo.db.execute('SELECT * FROM events ORDER BY id')]
+        page = self.feed(limit=1)
+        self.assertEqual(page['events'][0]['job_id'], first['id'])
+        self.assertTrue(page['has_more'])
+        self.assertEqual(page, self.feed(limit=1))  # Lost HTTP response or no speech: retry unchanged.
+        self.assertEqual(before, [tuple(r) for r in self.repo.db.execute('SELECT * FROM events ORDER BY id')])
+        with patch('firstmate_voice.repository.time.time', return_value=50):
+            third = self.finish_voice('three')  # Arrives between pages.
+        next_page = self.feed(page['next_cursor'], 1)
+        self.assertEqual(next_page['events'][0]['job_id'], second['id'])
+        self.assertTrue(next_page['has_more'])
+        last = self.feed(next_page['next_cursor'], 1)
+        self.assertEqual(last['events'][0]['job_id'], third['id'])
+        self.assertFalse(last['has_more'])
+        ids = [p['events'][0]['event_id'] for p in (page, next_page, last)]
+        self.assertEqual(ids, sorted(set(ids)))
+        self.assertEqual(self.feed(last['next_cursor']),
+                         {'events': [], 'next_cursor': last['next_cursor'], 'has_more': False})
+        # Reading one item, then interruption before saving, repeats that item.
+        # After saving only the first ID, later items remain available.
+        replay = self.feed(ids[0])
+        self.assertEqual([e['job_id'] for e in replay['events']], [second['id'], third['id']])
+        self.assertEqual(replay, self.feed(ids[0]))
+
+    def test_voice_feed_history_survives_reply_and_notification_ack(self):
+        job = self.finish_voice('question', State.WAITING)
+        question = self.feed()['events'][0]
+        revision = self.repo.input_revision(job['id'])
+        self.repo.enqueue('PRIVATE answer', 'reply', job_id=job['id'], input_revision=revision)
+        turn = self.repo.start_next()
+        with self.repo.transaction():
+            self.repo.finish(job['id'], turn['id'], Outcome(State.COMPLETED, 'Listo.', 'PRIVATE detail'))
+        self.repo.db.execute('UPDATE events SET notified=1')
+        # A fresh connection represents another gateway/process after restart.
+        with_repo = Repository(self.cfg.database, self.cfg.home)
+        try:
+            page = with_repo.voice_events()
+        finally:
+            with_repo.close()
+        self.assertEqual(page['events'][0], question)
+        self.assertEqual([e['event_type'] for e in page['events']], ['needs_input', 'completed'])
+        self.assertEqual(page['events'][1]['job_id'], job['id'])
+        self.assertEqual(page, self.feed())
+
+    def test_voice_feed_allowlist_every_semantic_type(self):
+        for index, state in enumerate((State.WAITING, State.COMPLETED, State.FAILED, State.CANCELLED)):
+            self.finish_voice(str(index), state)
+        page = self.feed()
+        self.assertEqual(len(page['events']), 4)
+        self.assertEqual(set(page), {'events', 'next_cursor', 'has_more'})
+        for event in page['events']:
+            field = 'question' if event['event_type'] == 'needs_input' else 'spoken_response'
+            self.assertEqual(set(event), {'event_id', 'job_id', 'event_type', field, 'at'})
+            self.assertEqual(event[field], '¿Continuar 0?' if field == 'question' else
+                             'Resultado ' + str(['needs_input', 'completed', 'failed', 'cancelled'].index(event['event_type'])))
+        for secret in ('PRIVATE', 'full_response', 'error', 'prompt', 'turn_id', 'notified', TOKEN, self.temp.name):
+            self.assertNotIn(secret, json.dumps(page))
+
+    def test_voice_feed_empty_internal_tail_and_rolled_back_event(self):
+        empty = {'events': [], 'next_cursor': 0, 'has_more': False}
+        self.assertEqual(self.feed(), empty)
+        job = self.repo.enqueue('PRIVATE', 'queued')
+        self.repo.event(job['id'], 'trace', {'detail': 'PRIVATE'}, channel='internal')
+        self.assertEqual(self.feed(), empty)
+        with self.assertRaises(RuntimeError):
+            with self.repo.transaction():
+                self.repo.event(job['id'], 'completed', {'spoken_response': 'Rolled back'})
+                raise RuntimeError('rollback')
+        self.assertEqual(self.feed(), empty)
+        self.repo.cancel(job['id'])
+        page = self.feed()
+        self.assertEqual([e['event_type'] for e in page['events']], ['cancelled'])
+        self.repo.event(job['id'], 'trace', {}, channel='internal')
+        self.assertEqual(self.feed(page['next_cursor']),
+                         {'events': [], 'next_cursor': page['next_cursor'], 'has_more': False})
+
+    def test_voice_feed_limits_queries_methods_and_future_cursor(self):
+        for query in ('?', '?after=', '?limit=0', '?limit=51', '?limit=-1', '?limit=true',
+                      '?after=-1', '?after=01', '?after=1.0', '?after=1e2', '?after=%31',
+                      '?after=+1', '?after=9007199254740992', '?after=9223372036854775808',
+                      '?after=0&after=0', '?limit=1&limit=2', '?internal=1', '?token=PRIVATE',
+                      '?after=0&', '?after=0#fragment', '?limit=01'):
+            with self.subTest(query=query):
+                self.assertEqual(self.request(path='/voice/events' + query), (400, {'error': 'invalid_query'}))
+        self.assertEqual(self.request(path='/voice/events?after=1'), (409, {'error': 'cursor_ahead'}))
+        self.assertEqual(self.request(path='/voice/events?after=9007199254740991')[0], 409)
+        self.assertEqual(self.request('POST', '/voice/events', {})[0], 405)
+        self.assertEqual(self.request(path='/voice/events/', data=None)[0], 404)
+        self.assertEqual(self.request(path='/voice/events', data={})[0], 400)
+        for index in range(51):
+            self.finish_voice(str(index))
+        self.assertEqual(len(self.request(path='/voice/events')[1]['events']), 20)
+        page = self.request(path='/voice/events?limit=50&after=0')[1]
+        self.assertEqual(len(page['events']), 50)
+        self.assertTrue(page['has_more'])
+        self.assertEqual(len(self.feed(page['next_cursor'], 50)['events']), 1)
+
+    def test_voice_feed_corruption_fails_without_skipping_or_leaking(self):
+        job = self.finish_voice('ok')
+        for payload in ('PRIVATE invalid JSON', '{}', '[]', '{"spoken_response":42}',
+                        json.dumps({'spoken_response': 'x' * 901}), '{"spoken_response":" "}'):
+            with self.subTest(payload=payload):
+                with self.repo.transaction():
+                    self.repo.event(job['id'], 'completed', {})
+                    self.repo.db.execute('UPDATE events SET payload=? WHERE id=(SELECT MAX(id) FROM events)', (payload,))
+                self.assertEqual(self.request(path='/voice/events'), (503, {'error': 'storage_unavailable'}))
+                self.repo.db.execute('DELETE FROM events WHERE id=(SELECT MAX(id) FROM events)')
+
+    def test_voice_feed_upgrade_preserves_phase3_history_and_seeks_index(self):
+        self.finish_voice('old')
+        old = self.feed()
+        # Recreate the Phase 3 schema (same tables, before the feed index).
+        self.repo.db.execute('DROP INDEX events_voice')
+        self.repo.db.execute('PRAGMA user_version=1')
+        upgraded = Repository(self.cfg.database, self.cfg.home)
+        try:
+            self.assertEqual(upgraded.db.execute('PRAGMA user_version').fetchone()[0], 2)
+            self.assertEqual(upgraded.voice_events(), old)
+            # A large outbox must not force sorting all past user events on GET.
+            plan = upgraded.db.execute(
+                "EXPLAIN QUERY PLAN SELECT id,job_id,type,at,payload FROM events INDEXED BY events_voice WHERE id>? "
+                "AND channel='user' AND type IN ('needs_input','completed','failed','cancelled') "
+                "ORDER BY id LIMIT ?", (0, 21)).fetchall()
+            self.assertTrue(any('events_voice' in row[3] for row in plan), plan)
+            self.assertFalse(any('TEMP B-TREE' in row[3] for row in plan), plan)
+        finally:
+            upgraded.close()
+
+    def test_voice_feed_maximum_text_and_exact_cursor_boundary(self):
+        from firstmate_voice.repository import MAX_VOICE_CURSOR
+        job = self.repo.enqueue('PRIVATE', 'boundary')
+        self.repo.db.execute("UPDATE sqlite_sequence SET seq=? WHERE name='events'", (MAX_VOICE_CURSOR - 1,))
+        self.repo.event(job['id'], 'completed', {'spoken_response': 'ñ' * 900})
+        page = self.feed()
+        self.assertEqual(page['next_cursor'], MAX_VOICE_CURSOR)
+        self.assertEqual(page['events'][0]['spoken_response'], 'ñ' * 900)
+        self.assertEqual(self.feed(MAX_VOICE_CURSOR)['events'], [])
+        self.repo.event(job['id'], 'completed', {'spoken_response': 'Beyond exact client range'})
+        self.assertEqual(self.request(path=f'/voice/events?after={MAX_VOICE_CURSOR}'),
+                         (503, {'error': 'storage_unavailable'}))
