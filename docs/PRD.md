@@ -2,6 +2,8 @@
 
 **Versión:** 0.1  
 **Estado:** MVP  
+**Nota de implementación (Fase 2):** el contrato real y sus límites están en [docs/integration.md](integration.md); prevalecen sobre las APIs conceptuales de este documento. ntfy es el canal elegido por el capitán.
+
 **Plataforma cliente:** iPhone / iOS  
 **Backend:** PC donde se ejecuta Herder  
 **Agente principal:** `First Mate`
