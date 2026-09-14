@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from http import HTTPStatus
 
-from .repository import Repository
+from .repository import Repository, MAX_VOICE_CURSOR, MAX_VOICE_PAGE
 
 MAX_BODY = 16384
 MAX_HEADERS = 8192
@@ -108,6 +108,24 @@ def strict_object(pairs):
 
 def invalid_constant(value):
     raise ValueError('Non-finite JSON value')
+
+
+def voice_query(path):
+    """Canonical decimal parameters only; no aliases, duplicates or decoding."""
+    _, separator, query = path.partition('?')
+    values = {'after': 0, 'limit': 20}
+    seen = set()
+    if separator:
+        for pair in query.split('&'):
+            key, equals, value = pair.partition('=')
+            if (not equals or key not in values or key in seen
+                    or not re.fullmatch(r'(?:0|[1-9][0-9]{0,15})', value)):
+                raise APIError(400, 'invalid_query')
+            values[key] = int(value)
+            seen.add(key)
+    if not 0 <= values['after'] <= MAX_VOICE_CURSOR or not 1 <= values['limit'] <= MAX_VOICE_PAGE:
+        raise APIError(400, 'invalid_query')
+    return values
 
 
 class Gateway(socketserver.ThreadingMixIn, socketserver.TCPServer):
@@ -218,7 +236,8 @@ class Handler(socketserver.BaseRequestHandler):
         if any(k in headers for k in ('transfer-encoding', 'content-encoding', 'expect', 'upgrade')):
             raise APIError(400, 'unsupported_framing')
         route = JOB_ROUTE.fullmatch(path)
-        allowed = ('GET' if path in ('/health', '/jobs/pending-input') else
+        is_feed = path.partition('?')[0] == '/voice/events'
+        allowed = ('GET' if path in ('/health', '/jobs/pending-input') or is_feed else
                    'POST' if path == '/jobs' or (route and route[2]) else
                    'GET' if route else None)
         if allowed is None:
@@ -226,6 +245,8 @@ class Handler(socketserver.BaseRequestHandler):
         self.allowed_method = allowed
         if method != allowed:
             raise APIError(405, 'method_not_allowed')
+        if is_feed:
+            voice_query(path)
         length = headers.get('content-length', '0' if method == 'GET' else '')
         if not re.fullmatch(r'[0-9]{1,6}', length):
             raise APIError(400, 'invalid_content_length')
@@ -251,6 +272,11 @@ class Handler(socketserver.BaseRequestHandler):
         return method, path, route, data
 
     def dispatch(self, repo, method, path, route, data):
+        if path.partition('?')[0] == '/voice/events':
+            try:
+                return 200, repo.voice_events(**voice_query(path))
+            except ValueError:
+                raise APIError(409, 'cursor_ahead') from None
         if path == '/health':
             repo.db.execute('SELECT 1').fetchone()
             return 200, {'status': 'ok'}

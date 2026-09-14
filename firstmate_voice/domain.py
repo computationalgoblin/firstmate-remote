@@ -38,7 +38,7 @@ class Outcome:
 
 
 def failed(error: str) -> Outcome:
-    return Outcome(State.FAILED, "La petición no pudo completarse. Consulta el detalle en la CLI.", error=error)
+    return Outcome(State.FAILED, "La petición no pudo completarse.", error=error)
 
 
 def cancelled() -> Outcome:

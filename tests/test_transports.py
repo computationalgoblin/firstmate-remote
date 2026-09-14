@@ -9,7 +9,7 @@ from firstmate_voice.herder.adapter import HerderAdapter, atomic_json
 from firstmate_voice.herder.herdr import HerdrClient
 from firstmate_voice.notifications.base import Notification
 from firstmate_voice.notifications.dispatcher import Dispatcher
-from firstmate_voice.notifications.ntfy import NtfyNotifier
+from firstmate_voice.notifications.ntfy import NtfyNotifier, READ_SHORTCUT_URL
 from firstmate_voice.repository import Repository
 from firstmate_voice.domain import Outcome, State
 from tests.helpers import FakeControl, config
@@ -129,3 +129,28 @@ class TransportTest(unittest.IsolatedAsyncioTestCase):
         for server in ('http://push.invalid', 'https://secret@push.invalid', 'https://push.invalid?token=secret'):
             with self.assertRaises(ValueError):
                 NtfyNotifier(server, 'test')
+
+    async def test_ntfy_optional_click_is_fixed_and_contains_no_event_data(self):
+        config = {'server': 'https://push.invalid', 'topic_env': 'TEST_TOPIC',
+                  'token_env': 'TEST_TOKEN', 'click': READ_SHORTCUT_URL}
+        with patch.dict('os.environ', {'TEST_TOPIC': 'private-topic', 'TEST_TOKEN': 'private-token'}):
+            notifier = NtfyNotifier.from_config(config)
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value.status = 200
+        for kind in ('needs_input', 'completed', 'failed', 'cancelled'):
+            with patch('urllib.request.OpenerDirector.open', return_value=response) as request:
+                await notifier.notify(Notification(123, 'private-job', kind, 'Texto privado.'))
+            sent = request.call_args.args[0]
+            payload = json.loads(sent.data)
+            self.assertEqual(payload, {'topic': 'private-topic', 'title': 'First Mate: ' + kind,
+                                      'message': 'Texto privado.', 'click': READ_SHORTCUT_URL})
+            self.assertNotIn('private-token', sent.data.decode())
+            self.assertNotIn('private-job', sent.data.decode())
+            self.assertEqual(sent.get_header('Authorization'), 'Bearer private-token')
+        for click in (True, False, None, 1, [], {}, 'https://example.com',
+                      READ_SHORTCUT_URL + '&text=secret', READ_SHORTCUT_URL + '#secret',
+                      READ_SHORTCUT_URL + '\n', READ_SHORTCUT_URL.replace('%20', '+')):
+            with self.subTest(click=click), self.assertRaises(ValueError):
+                NtfyNotifier('https://push.invalid', 'test', click=click)
+        with self.assertRaises(ValueError):
+            NtfyNotifier.from_config(dict(config, actions=[]))

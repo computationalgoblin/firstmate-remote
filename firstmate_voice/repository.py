@@ -1,5 +1,6 @@
 """SQLite transactions shared by short-lived CLI clients and the worker."""
 import json
+import math
 import sqlite3
 import time
 import uuid
@@ -7,6 +8,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .domain import State, TERMINAL, Outcome, validate_transition, transcript
+
+MAX_VOICE_CURSOR = 2**53 - 1  # Exact integers in JSON/Shortcuts clients.
+MAX_VOICE_PAGE = 50
 
 
 class Repository:
@@ -26,9 +30,14 @@ class Repository:
                     for statement in Path(__file__).with_name("schema.sql").read_text().split(';'):
                         if statement.strip():
                             self.db.execute(statement)
-                    self.db.execute("PRAGMA user_version=1")
-                elif version != 1:
+                elif version not in (1, 2):
                     raise ValueError(f"Unsupported database version {version}")
+                if version < 2:
+                    # Migration 2: seek directly through speakable history;
+                    # the outbox index groups by notified and requires sorting.
+                    self.db.execute("CREATE INDEX events_voice ON events(id) WHERE channel='user' "
+                                    "AND type IN ('needs_input','completed','failed','cancelled')")
+                    self.db.execute("PRAGMA user_version=2")
                 self.db.execute("INSERT OR IGNORE INTO metadata VALUES ('home',?)", (self.home,))
                 if self.db.execute("SELECT value FROM metadata WHERE key='home'").fetchone()[0] != self.home:
                     raise ValueError("Database belongs to a different First Mate home")
@@ -71,6 +80,45 @@ class Repository:
 
     def input_revision(self, job_id):
         return self.db.execute("SELECT MAX(seq) FROM turns WHERE job_id=?", (job_id,)).fetchone()[0]
+
+    def voice_events(self, after=0, limit=20):
+        """Read-only historical feed, independent of notification delivery.
+
+        AUTOINCREMENT plus SQLite's serialized writers orders committed events,
+        even when timestamps tie or go backwards. Never advance over a lookahead
+        row or acknowledge on GET: only the listener knows what was spoken.
+        """
+        if type(after) is not int or not 0 <= after <= MAX_VOICE_CURSOR:
+            raise ValueError('Invalid voice cursor')
+        if type(limit) is not int or not 1 <= limit <= MAX_VOICE_PAGE:
+            raise ValueError('Invalid voice limit')
+        self.db.execute('BEGIN')
+        try:
+            latest = self.db.execute('SELECT COALESCE(MAX(id),0) FROM events').fetchone()[0]
+            if after > latest:
+                raise ValueError('Voice cursor ahead')
+            rows = self.db.execute(
+                "SELECT id,job_id,type,at,payload FROM events INDEXED BY events_voice WHERE id>? AND channel='user' "
+                "AND type IN ('needs_input','completed','failed','cancelled') ORDER BY id LIMIT ?",
+                (after, limit + 1)).fetchall()
+        finally:
+            self.db.execute('COMMIT')
+        events = []
+        for row in rows[:limit]:
+            field = 'question' if row['type'] == 'needs_input' else 'spoken_response'
+            try:
+                message = json.loads(row['payload'])[field]
+                if (not isinstance(message, str) or not message.strip() or len(message) > 900
+                        or not 0 < row['id'] <= MAX_VOICE_CURSOR or not math.isfinite(row['at'])):
+                    raise ValueError
+                message.encode('utf-8')
+            except (ValueError, KeyError, TypeError):
+                # Never skip corrupt events (loss), nor return raw stored data.
+                raise sqlite3.DatabaseError('Invalid stored voice event') from None
+            events.append({'event_id': row['id'], 'job_id': row['job_id'],
+                           'event_type': row['type'], field: message, 'at': row['at']})
+        return {'events': events, 'next_cursor': events[-1]['event_id'] if events else after,
+                'has_more': len(rows) > limit}
 
     def turns(self, job_id):
         return [dict(r) for r in self.db.execute("SELECT * FROM turns WHERE job_id=? ORDER BY seq", (job_id,))]
