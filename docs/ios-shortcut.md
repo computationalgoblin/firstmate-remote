@@ -64,7 +64,7 @@ Los POST del servidor devuelven 202. La acción estándar de Atajos normalmente 
 
 ## Atajo principal «First Mate»
 
-1. **Obtener archivo de carpeta** `FirstMate/pending.json`, con «Error si no se encuentra» desactivado. Si hay fichero, **Obtener diccionario de la entrada**. Si `acknowledged` no es verdadero, usa **Elegir del menú**: «Reintentar pendiente» → ejecutar «First Mate Enviar pendiente» y detener; «Salir» → detener. Si el JSON no es válido, deja que la acción se detenga y revisa el fichero; no sobrescribas una operación incierta.
+1. **Obtener archivo de carpeta** `FirstMate/pending.json`, con «Error si no se encuentra» desactivado. Añade **Si** el resultado tiene valor; en esta condición la variable debe ser de tipo **Archivo**. Dentro, usa **Obtener diccionario de la entrada** y extrae `acknowledged`. Añade **Si** `acknowledged` es verdadero; en esta condición debe ser de tipo **Booleano**, y la rama verdadera continúa sin menú. En la rama **Si no**, usa **Elegir del menú**: «Reintentar pendiente» → ejecutar «First Mate Enviar pendiente» y detener; «Salir» → detener. Si el JSON no es válido, deja que la acción se detenga y revisa el fichero; no sobrescribas una operación incierta.
 2. **Ejecutar atajo** «First Mate UUID» → **Establecer variable** `RequestID`. Se genera una sola vez por operación; no dentro de reintentos.
 3. **Dictar texto** (Dictate Text), idioma español, finalizar al dejar de hablar (o al tocar, según preferencia) → `Dictado`.
 4. **Reemplazar texto**, expresión regular activada, patrón `^\s+|\s+$`, reemplazo vacío, sobre `Dictado` → `Prompt`. **Si** `Prompt` no tiene valor: **Detener este atajo**. Esto no envía ni guarda una operación vacía.

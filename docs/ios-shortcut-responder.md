@@ -40,11 +40,11 @@ No copies aquí valores reales, no exportes el atajo configurado y no pongas el 
 1. Añade **Obtener archivo de carpeta** para `FirstMate/pending.json`, con «Error si no se encuentra» desactivado. Guarda el resultado como `ArchivoPendiente`.
 2. Añade **Si** `ArchivoPendiente` **tiene valor**. En esta condición, `ArchivoPendiente` debe ser de tipo **Archivo**.
 3. Dentro, aplica **Obtener diccionario de la entrada** y guarda `Borrador` de tipo **Diccionario**. Obtén `acknowledged` como `Confirmado`.
-4. Añade **Si** `Confirmado` **no es verdadero**. En esta condición, `Confirmado` debe ser de tipo **Booleano**.
-5. Dentro, añade **Elegir del menú**:
+4. Añade **Si** `Confirmado` **es verdadero**. En esta condición, `Confirmado` debe ser de tipo **Booleano**. Deja la rama verdadera sin menú: el borrador ya está confirmado y el flujo puede continuar.
+5. En la rama **Si no**, añade **Elegir del menú**:
    - «Reintentar pendiente»: **Ejecutar atajo** `First Mate Enviar pendiente` y después **Detener este atajo**.
    - «Salir»: **Detener este atajo**.
-6. Cierra las dos condiciones.
+6. Cierra las dos condiciones. Esta forma evita depender de una comparación booleana negativa que no está disponible en todas las versiones localizadas de Atajos.
 
 Verificación: un borrador no confirmado nunca se sobrescribe. Un borrador confirmado permite continuar. Un JSON inválido debe terminar con el error nativo de Atajos, no tratarse como ausencia de borrador.
 
@@ -68,11 +68,11 @@ Verificación: la petición es GET, no tiene cuerpo y no incorpora el token a la
 ## Bloque 3: resolver cero o una pregunta
 
 1. Añade **Si** `Cantidad` **es 0**. En esta condición, `Cantidad` debe ser de tipo **Número** entero.
-2. Dentro, añade **Si** `HayMas` **es falso**. En esta condición, `HayMas` debe ser de tipo **Booleano**:
-   - rama verdadera: **Leer texto** «No hay preguntas pendientes» y detener;
-   - rama contraria: **Leer texto** «Respuesta de First Mate inválida» y detener.
+2. Dentro, añade **Si** `HayMas` **es verdadero**. En esta condición, `HayMas` debe ser de tipo **Booleano**:
+   - rama verdadera: **Leer texto** «Respuesta de First Mate inválida» y detener;
+   - rama **Si no**: **Leer texto** «No hay preguntas pendientes» y detener.
 3. Después del bloque anterior, añade **Si** `Cantidad` **es 1**. En esta condición, `Cantidad` debe ser de tipo **Número** entero.
-4. Dentro, añade **Si** `HayMas` **es falso**. En esta condición, `HayMas` debe ser de tipo **Booleano**. En la rama verdadera usa **Obtener primer elemento de la lista** sobre `Trabajos` y guarda `Seleccionado` como **Diccionario**. En la rama contraria continúa al bloque de selección explícita.
+4. Dentro, añade **Si** `HayMas` **es verdadero**. En esta condición, `HayMas` debe ser de tipo **Booleano**. En la rama verdadera continúa al bloque de selección explícita. En la rama **Si no**, usa **Obtener primer elemento de la lista** sobre `Trabajos` y guarda `Seleccionado` como **Diccionario**.
 
 No selecciones automáticamente el único elemento visible cuando `has_more=true`: la respuesta está truncada y existen más preguntas.
 
