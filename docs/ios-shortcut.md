@@ -76,6 +76,8 @@ Al acabar el dictado, el único intercambio obligatorio de red es el POST. En un
 
 ## Atajo «First Mate Responder»
 
+Para construirlo por etapas en el dispositivo, consulta también la [guía práctica autocontenida de «First Mate Responder»](ios-shortcut-responder.md), con bloques verificables y tipos explícitos para cada condición «Si».
+
 1. Aplica el mismo control de borrador pendiente del paso 1 de «First Mate». No sobrescribas un envío o respuesta inciertos.
 2. Ejecuta «First Mate Config»; **URL** `base_url/jobs/pending-input`; **Obtener contenido de URL**, método **GET**, cabecera Bearer, **sin cuerpo**. Convierte la respuesta en diccionario. Exige ausencia de `error`, lista `jobs` y Booleano `has_more`; una respuesta inválida termina el atajo.
 3. **Contar** los elementos de `jobs`. Si hay cero y `has_more=false`: leer «No hay preguntas pendientes» y detener. Si hay cero y `has_more=true`, detener con aviso de respuesta inválida.
