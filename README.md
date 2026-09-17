@@ -118,14 +118,16 @@ server = "https://tu-servidor-ntfy"
 topic_env = "FMVOICE_NTFY_TOPIC"
 token_env = "FMVOICE_NTFY_TOKEN"
 timeout = 5
-click = "" # Opcional; desactivado por defecto.
+click = "" # Opcional: "", URL fija de Leer o "auto".
 ```
 
 Guarda las variables con tus valores reales en `~/.config/fmvoice/notifications.env` con permisos `600`; la unidad systemd lo carga. En primer plano, expórtalas en el entorno. Para un servidor sin autenticación, configura `token_env = ""`. Nunca versiones ese fichero ni el tema.
 
 Se publica por HTTPS con el [formato JSON oficial de ntfy](https://docs.ntfy.sh/publish/#publish-as-json). Solo se envían pregunta o `spoken_response` para `needs_input`, `completed`, `failed` y `cancelled`. No se envían prompts, respuesta detallada, errores técnicos ni logs. No se siguen redirecciones con credenciales. Los fallos del proveedor se reintentan cada 5 s sin modificar el job; tras un crash puede repetirse una notificación (entrega al menos una vez). Activar ntfy más tarde entrega también los eventos pendientes existentes. La configuración del cliente iOS se describe en el flujo de Shortcuts; no se añaden APNs ni reproducción automática del resultado.
 
-Para probar apertura **al tocar** el aviso, configura `click = "shortcuts://run-shortcut?name=Leer%20First%20Mate"`. Solo se acepta esa cadena exacta o `""`; se rechazan otros destinos, parámetros, tipos y claves desconocidas. La URL es fija: no lleva token, job, pregunta ni texto hablado. Mantén el valor vacío hasta validar el enlace en tu iPhone; tocar puede requerir desbloqueo. Consulta [Click action de ntfy](https://docs.ntfy.sh/publish/#click-action) y el [esquema URL de Apple](https://support.apple.com/guide/shortcuts/apd624386f42/ios).
+Cada aviso lleva título, prioridad y etiqueta fijos según el tipo: `needs_input` → «First Mate pregunta» (prioridad 4), `completed` → «First Mate: listo» (3), `failed` → «First Mate: error» (4) y `cancelled` → «First Mate: cancelado» (2). Dependen solo del tipo de evento, nunca del contenido.
+
+Para abrir un atajo **al tocar** el aviso, `click` admite exactamente `""`, `"shortcuts://run-shortcut?name=Leer%20First%20Mate"` (siempre Leer) o `"auto"` (las preguntas abren «First Mate Responder»; el resto, «Leer First Mate»). Se rechazan otros destinos, parámetros, tipos y claves desconocidas. La URL es fija: no lleva token, job, pregunta ni texto hablado. Mantén el valor vacío hasta validar el enlace en tu iPhone; tocar puede requerir desbloqueo. Consulta [Click action de ntfy](https://docs.ntfy.sh/publish/#click-action) y el [esquema URL de Apple](https://support.apple.com/guide/shortcuts/apd624386f42/ios).
 
 ## Seguridad y depuración
 

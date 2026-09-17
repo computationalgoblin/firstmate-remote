@@ -8,6 +8,17 @@ from urllib.parse import urlsplit
 from .base import Notification
 
 READ_SHORTCUT_URL = 'shortcuts://run-shortcut?name=Leer%20First%20Mate'
+RESPOND_SHORTCUT_URL = 'shortcuts://run-shortcut?name=First%20Mate%20Responder'
+# `auto` opens Responder for questions and Leer for everything else.
+CLICK_MODES = ('', READ_SHORTCUT_URL, 'auto')
+# Fixed presentation per event type: title, ntfy priority (1–5) and emoji tags.
+PRESENTATION = {
+    'needs_input': ('First Mate pregunta', 4, ['question']),
+    'completed': ('First Mate: listo', 3, ['white_check_mark']),
+    'failed': ('First Mate: error', 4, ['warning']),
+    'cancelled': ('First Mate: cancelado', 2, ['no_entry_sign']),
+}
+DEFAULT_PRESENTATION = ('First Mate', 3, [])
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -18,8 +29,8 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 class NtfyNotifier:
     def __init__(self, server: str, topic: str, token: str = '', timeout: float = 5, *, click: str = ''):
         # Exact allowlist: no secrets, input text, arbitrary URLs or interpolation.
-        if not isinstance(click, str) or click not in ('', READ_SHORTCUT_URL):
-            raise ValueError('Invalid ntfy click; use the fixed Leer First Mate URL or an empty string')
+        if not isinstance(click, str) or click not in CLICK_MODES:
+            raise ValueError('Invalid ntfy click; use "auto", the fixed Leer First Mate URL or an empty string')
         self.click = click
         url = urlsplit(server)
         if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
@@ -45,9 +56,13 @@ class NtfyNotifier:
                    click=config.get('click', ''))
 
     def publish(self, notification: Notification):
-        payload = {'topic': self.topic, 'title': 'First Mate: ' + notification.event_type,
-                   'message': notification.message}
-        if self.click:
+        title, priority, tags = PRESENTATION.get(notification.event_type, DEFAULT_PRESENTATION)
+        payload = {'topic': self.topic, 'title': title, 'message': notification.message, 'priority': priority}
+        if tags:
+            payload['tags'] = tags
+        if self.click == 'auto':
+            payload['click'] = RESPOND_SHORTCUT_URL if notification.event_type == 'needs_input' else READ_SHORTCUT_URL
+        elif self.click:
             payload['click'] = self.click
         body = json.dumps(payload).encode()
         headers = {'Content-Type': 'application/json'}

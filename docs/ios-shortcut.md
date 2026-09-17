@@ -160,11 +160,14 @@ En el servidor propio, configura HTTPS, `auth-default-access: deny-all`, ACL por
 
 Instala ntfy iOS, añade servidor y credencial de lectura, y suscríbete al tema privado. Permite notificaciones, entrega inmediata y pantalla bloqueada; excluye ntfy del resumen programado. Los cuerpos contienen texto privado de voz: configura vistas previas según tu privacidad y valida qué aparece en pantalla y se anuncia.
 
-El publicador admite `notifications.click` vacío (predeterminado) o exactamente:
+El publicador admite `notifications.click` vacío (predeterminado), la URL fija de Leer o el modo `auto`:
 
 ```toml
-click = "shortcuts://run-shortcut?name=Leer%20First%20Mate"
+click = "shortcuts://run-shortcut?name=Leer%20First%20Mate"  # todo abre Leer
+click = "auto"  # preguntas → First Mate Responder; resto → Leer First Mate
 ```
+
+Con `auto`, los atajos deben llamarse exactamente «Leer First Mate» y «First Mate Responder». Título, prioridad y etiqueta se fijan por tipo de evento (véase el README).
 
 [ntfy documenta `click`](https://docs.ntfy.sh/publish/#click-action) para abrir un destino al tocar, y [Apple documenta el esquema de ejecución](https://support.apple.com/guide/shortcuts/apd624386f42/ios). La combinación concreta exige **PRUEBA FÍSICA PENDIENTE**. Actívala solo para probar después de construir el atajo; conserva vacío como configuración cotidiana hasta validar. No hay acciones HTTP ni parámetros con texto, secretos o IDs. El enlace no autoriza el GET; el atajo carga su propia configuración. Un toque puede pedir desbloqueo. La mera llegada nunca se presenta como disparador automático.
 

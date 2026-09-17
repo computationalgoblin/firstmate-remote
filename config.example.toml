@@ -17,7 +17,8 @@ topic_env = "FMVOICE_NTFY_TOPIC"
 token_env = "FMVOICE_NTFY_TOKEN"
 timeout = 5
 # Optional tap-to-open Shortcut, not a push-triggered automation. Empty by default.
-# Only allowed nonempty value: shortcuts://run-shortcut?name=Leer%20First%20Mate
+# Allowed nonempty values: shortcuts://run-shortcut?name=Leer%20First%20Mate (always Leer)
+# or "auto" (questions open First Mate Responder, everything else Leer First Mate).
 click = ""
 
 [gateway]
