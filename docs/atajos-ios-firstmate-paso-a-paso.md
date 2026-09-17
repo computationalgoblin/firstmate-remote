@@ -557,7 +557,7 @@ El contenido dinámico hablado se limita a `question` o `spoken_response`.
 
 ## 12. Notificaciones ntfy
 
-ntfy no es un atajo. Su función es avisar de `needs_input`, `completed`, `failed` o `cancelled`; después el capitán inicia **Leer First Mate** o **First Mate Responder**. La entrega del aviso no modifica `pending.json` ni `voice-cursor.json`.
+ntfy no es un atajo. Su función es avisar de `needs_input`, `completed`, `failed` o `cancelled`; después el usuario inicia **Leer First Mate** o **First Mate Responder**. La entrega del aviso no modifica `pending.json` ni `voice-cursor.json`.
 
 La apertura al tocar solo admite, si se configura y se valida físicamente:
 

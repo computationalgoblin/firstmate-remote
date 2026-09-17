@@ -9,7 +9,7 @@ claim_timeout = 15
 poll_interval = 0.25
 
 [notifications]
-# Captain's selected provider. Disabled until explicitly configured locally.
+# Selected notification provider. Disabled until explicitly configured locally.
 provider = "ntfy"
 enabled = false
 server = ""

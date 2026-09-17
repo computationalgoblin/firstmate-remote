@@ -112,7 +112,7 @@ Los estados son `queued`, `running`, `waiting_for_input`, `completed`, `failed` 
 
 ## ntfy
 
-La elección del capitán es **ntfy**. La implementación es opcional y consume el outbox de eventos persistido, fuera del Job Manager. Configura localmente:
+El proveedor de notificaciones elegido es **ntfy**. La implementación es opcional y consume el outbox de eventos persistido, fuera del Job Manager. Configura localmente:
 
 ```toml
 [notifications]
@@ -144,7 +144,7 @@ Para abrir un atajo **al tocar** el aviso, `click` admite exactamente `""`, `"sh
 - Para investigar un job parado, consulta `status`, `health`, eventos internos y los ficheros de **ese ID** en `state/voice/turns`. Salud temporalmente inaccesible conserva el turno activo. `blocked` o `idle` de Herdr nunca se interpretan como `needs_input`.
 - Un `fmvoice-worker.lock` estático es normal: la exclusión se basa en `flock`, no en la presencia del fichero. Mantiene además la asociación home/base incluso con el worker parado. No lo borres con un worker activo. Para cambiar de base, para el servicio, reconcilia los turnos pendientes, migra la base con backup y actualiza esa asociación conscientemente.
 
-Consulta [recuperación y límites del contrato](docs/integration.md#recuperación-y-cancelación) antes de intervenir en un turno incierto. Esta fase no añade un comando de reenvío automático: la incertidumbre no debe duplicar acciones del capitán.
+Consulta [recuperación y límites del contrato](docs/integration.md#recuperación-y-cancelación) antes de intervenir en un turno incierto. Esta fase no añade un comando de reenvío automático: la incertidumbre no debe duplicar acciones del usuario.
 
 ## Pruebas
 
