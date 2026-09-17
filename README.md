@@ -1,5 +1,9 @@
 # Firstmate Remote
 
+> **EN** — Asynchronous voice remote for [First Mate](https://github.com/kunchenguid/firstmate), the open-source agent supervisor by [kunchenguid](https://github.com/kunchenguid) ([myfirstmate.io](https://myfirstmate.io)). Dictate a task from an iPhone Shortcut, hang up, get an ntfy push when the live First Mate session answers or needs input, and listen to the result later. Zero runtime dependencies, SQLite job queue, token-authenticated loopback HTTP gateway exposed through Tailscale Serve, systemd units and 57 offline tests. It is an independent companion project: it plugs into First Mate's voice-file contract and does not modify First Mate or [herdr](https://github.com/herdrdev/herdr).
+>
+> **ES** — Mando remoto de voz asíncrono para [First Mate](https://github.com/kunchenguid/firstmate), el supervisor de agentes de código abierto de kunchenguid. Proyecto independiente: se conecta al contrato de voz de First Mate sin modificarlo. Para ejecutarlo necesitas una instalación de First Mate con la extensión de voz activa.
+
 Backend local asíncrono para enviar trabajos a la **sesión viva de First Mate**, cerrar el cliente y consultar o responder después. La Fase 4 del MVP añade un feed autenticado de voz a SQLite, cola serial, CLI, gateway, worker independiente y notificaciones ntfy. El iPhone dicta, recibe «Enviado» tras persistir el trabajo y termina. ntfy avisa; el usuario inicia **«Leer First Mate»** por Siri, Action Button o Atajos para escuchar resultados y preguntas sin conocer los IDs ni usar una terminal. No hay aplicación iOS nativa ni automatización `push → Speak Text`.
 
 La integración utiliza el contrato real de la extensión de voz de First Mate:
